@@ -1,0 +1,202 @@
+#+TITLE: Brainf*ck JIT Compiler in around 155 Lines with GNU C
+#+AUTHOR: Matthew Plant
+#+EMAIL: map@maplant.com
+#+LINK_HOME: index.html
+#+LINK_UP: index.html
+#+OPTIONS: author:t email:t toc:nil
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="css/stylesheet.css">
+
+[[./index.html][Back to my homepage]]
+
+In my last [[./jit.html][post]] I illustrated how JIT compilation can be achieved using GNU C
+with very little assembler (in that case, only one line). However, although I 
+just claimed the contrary, it didn't really give an example JIT compilation, 
+only JIT loading. Here I finally rectify that by providing an extremely 
+unpolished Brainfuck compiler, using the previously illustrated methods.
+A few things to note about the example, before I dive into (and barely explain anything):
+
++ Because I didn't want to deal with reallocating and whatnot, the
+  program just allocates and anonymous mapping of some sort of random
+  size (MAX_PROG_SIZE).
+
++ Because I didn't want to do relative jumps, I just set the desired
+  jump address to ~%EAX~ and used a register-indirect jump. This means
+  that the code could definitely simplified a whole lot, but it made my
+  life a lot easier.
+
++ The code I used to test this was the default hello world program
+  supplied by Wikipedia and this
+  [[http://esoteric.sange.fi/brainfuck/bf-source/prog/mandelbrot.b][snazzy Mandelbrot viewer]]
+
++ The code only works on 32 bit systems as the size of an integer in GCC
+  on any system is 32 bits long.
+
++ If you want to see the entire program, including test cases (of which
+  there are only two), a [[https://github.com/DataAnalysisCosby/BF-JIT][GitHub repo is available here]].
+
+*/WARNING/* this code is */DEEP MAGIC!/*
+
+#+BEGIN_SRC c
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+#include <sys/mman.h>
+
+#define MAX_LOOPS  1000
+#define STACK_SIZE 1000
+#define MAX_PROG_SIZE (1024 * 10000) /* I don't know */
+
+unsigned char *
+find_jmp(unsigned char *d, size_t size)
+{
+	unsigned int prev;
+	unsigned char *l;
+ 
+	prev = 0;
+	do {
+		l = memchr(d + prev, 0xd5, size - prev);
+		assert(l != NULL);      
+		prev++;
+	} while (l[1] != 0xda ||
+    		 l[2] != 0xad ||
+		     l[3] != 0xde);
+	return l; 
+}
+
+void
+compile_and_run(char *code)
+{
+	void *dyn;
+	unsigned int mem_used;
+	unsigned int prev, curr, after;
+	unsigned int j_sp;
+	unsigned int j_stack[MAX_LOOPS]; /* Jump locations, used during compilation. */
+	unsigned int bf_sp;                              /* Brainfuck stack pointer. */
+	unsigned int bf_stack[STACK_SIZE];                       /* Brainfuck stack. */
+	int (*getchar_a)(void) = &amp;getchar;                      /* Alias of getchar. */
+	int (*putchar_a)(int) = &amp;putchar;                       /* Alias of putchar. */
+	unsigned char *d, *loc;
+
+#define COPY_SECTION(sec_s, sec_e, dest) do {				\
+		unsigned char *buf;					\
+		mem_used += &&sec_e - &&sec_s;				\
+		if (mem_used > MAX_PROG_SIZE) {				\
+			fprintf(stderr, "Maximum program size exceeded!\n"); \
+			abort();					\
+		}							\
+		for (buf = &&sec_s; buf < &&sec_e; buf++, (dest)++)	\
+			*(dest) = *buf;					\
+	} while (0)
+
+	bf_sp = 0;
+	memset(bf_stack, '\0', sizeof(int) * STACK_SIZE);
+
+	/* Allocate memory. */
+	mem_used = 0;
+	dyn = mmap (0, MAX_PROG_SIZE,
+		    PROT_READ | PROT_WRITE | PROT_EXEC,  
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+	/* Compile the program. */
+	d = dyn;
+	j_sp = 0;
+	memset(j_stack, '\0', sizeof(int) * MAX_LOOPS);
+
+	for (; *code; code++)
+		switch (*code) {
+		case '&gt;':
+			COPY_SECTION(inc_sp, dec_sp, d);
+			break;
+
+		case '&lt;':
+			COPY_SECTION(dec_sp, inc_se, d);
+			break;
+      
+		case '+':
+			COPY_SECTION(inc_se, dec_se, d);
+			break;
+
+		case '-':
+			COPY_SECTION(dec_se, inp, d);
+			break;
+
+		case ',':
+			COPY_SECTION(inp, outp, d);
+			break;
+
+		case '.':
+			COPY_SECTION(outp, loop_enter, d);
+			break;
+
+		case '[':
+			j_stack[j_sp++] = (unsigned int) d;
+			COPY_SECTION(loop_enter, loop_exit, d);
+			break;
+
+		case ']':
+			prev = j_stack[--j_sp];
+			curr = d;
+			COPY_SECTION(loop_exit, jump_end, d);
+			after = d;
+			loc = find_jmp(prev, &&loop_exit - &&loop_enter);
+			loc[3] = (after >> 24) & 0xff;
+			loc[2] = (after >> 16) & 0xff;
+			loc[1] = (after >> 8) & 0xff;
+			loc[0] = after & 0xff;
+			loc = find_jmp(curr, &&jump_end - &&loop_exit);
+			loc[3] = (prev >> 24) & 0xff;
+			loc[2] = (prev >> 16) & 0xff;
+			loc[1] = (prev >> 8)  & 0xff;
+			loc[0] = prev & 0xff;
+			break;
+
+		default:
+			break;
+		}
+
+	/* Copy over the jump back: */
+	COPY_SECTION(jump_end, end, d);
+  
+	/* Now call the code. */  
+	goto *dyn;
+
+	/* Instructions: */
+inc_sp: /* Increment stack pointer. */
+	bf_sp++;
+dec_sp: /* Decrement stack pointer. */
+	bf_sp--;
+inc_se: /* Increment stack element. */
+	bf_stack[bf_sp]++;
+dec_se: /* Decrement stack element. */
+	bf_stack[bf_sp]--;
+inp:      /* Get one byte of input. */
+	bf_stack[bf_sp] = getchar_a();
+outp:            /* Print one byte. */
+	putchar_a((int)bf_stack[bf_sp]);
+loop_enter:
+	if (!bf_stack[bf_sp]) {
+		asm volatile("movl $0xdeaddad5, %eax");
+		asm volatile("jmp *%eax");
+	}
+loop_exit:
+	asm volatile("movl $0xdeaddad5, %eax");
+	asm volatile("jmp *%eax");
+jump_end:   
+	asm volatile("jmp *%0" :: "r" (&&end)); /* Jump to the end of the function. */
+end:
+	munmap(dyn, MAX_PROG_SIZE); /* Free the data and return. */
+	return;  
+}
+#+END_SRC
+
+I'm not going to go in to much detail on how exactly this works, as all of the mechanics are noted
+in my previous blog. However, there is one part worth explaining, that is what happens when we get 
+to a closing bracket ']'. Whenever we get to a place where we need to jump, we write out the 
+instructions to jump to some random location. In this case, that location is 0xDEADDAD5. This 
+is because we don't know where exactly we are to jump yet. Then, when we do figure out, we find the
+location of memory where we load 0xDEADDAD5 into ~%EAX~ and change that value to the correct address. 
+Sound confusing? Yeah I can't really explain it well. Sorry about that.
+
+Anyway, I hope you found this interesting. I sort of did? 

@@ -1,0 +1,814 @@
+#+TITLE: Matt's Game Framework, a Rust library for 3D game creation
+#+AUTHOR: Matthew Plant
+#+EMAIL: map@maplant.com
+#+OPTIONS: tex:t num:nil author:t email:t
+#+LINK_HOME: index.html
+#+LINK_UP: index.html
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="css/stylesheet.css">
+
+[[./index.html][Back to my homepage]]
+
+* TODO This manual is under construction!
+
+Beware, this manual is far from complete, and largely incorrect. A lot of things are probably incorrect!
+Please bear with me during the process of creation.
+
+* Introduction 
+
+Matt's Game Framework (MGF) is a Rust library I've been working on in order to facilitate the 
+development of my own 3D video games. It hopes to provide a wide range of complex functionality for
+collision detection, physics resolution, and in the future skeletal animation. Collision detection in
+particular is very unique and utilizes continuous collision detection to quickly and accurately 
+produce and resolve contacts.
+
+Additionally MGF aims to be as simple as possible. It has only one dependency, cgmath, and makes no
+assumptions regarding rendering infrastructure.
+
+While MGF does not provide any specific tooling for now to draw to the screen, it is very broad in 
+its scope and provides a wide variety of features such as routines for loading geometry files and 
+procedural macros to facilitate in creating game worlds and objects. 
+
+As a reflection of the fact that this framework was explicilty designed to meet my own game 
+development needs, only 3D geometries are supported and the only precision available is 32 bit floating
+point. This no reason this can't be changed in the future to be more generic but at the moment it is
+not a priority.
+
+While this document provides a very complete overview of the project subtler details are addressed 
+in the [[https://docs.rs/mgf/0.2.2/mgf/][documentation]].
+
+* Acknowledgments
+
+While I don't want to conflate how large of an accomplishment it is perceived I think writing this library is
+(which is to say I don't think this library is anything special), I would like to thank the inspiration for its
+existence. 
+
+After graduating college, I found myself increasingly disengaged with the state of software engineering jobs. 
+I was unemployed and despondent, constantly feeling like this skill that before I considered an essential part of
+myself no longer seemed like something I was particularly good at. After all, if I was talented surely I would 
+ave more success gaining employment. 
+
+I needed a task to keep my mind on, so I decided that it was finally time to make the physics engine I have always 
+wanted to make. 
+
+Once I had a brief conversation with one of my favorite video game designers on twitter, the creator of 
+Katamari Damacy 高橋 慶太 (Keita Takahashi), in which I responded to his call asking for someone to make him a physics engine:
+[picture]
+
+Unfortunately I didn't have any experience making physics engines so I couldn't find out if he was 
+kidding or not. Oh well. Anyway if you're reading this Keita, here is the physics engine you asked for.
+I don't think it quite fits your description, but now I can definitely say that if you hire me, I will
+make you the physics engine you asked for.
+
+* Shapes
+
+MGF provides data structures to facilitate the creation and handling of game geometries. Almost all 
+of these geometries share the fact that they can be displaced by a vector (i.e. moved around) and 
+decomposed in some arbitrary way into a single point that we can use to determine displacement over
+time (i.e they have a "center" of some sort, perhaps arbitrarily defined). 
+We call these shared properties a ~Shape~:
+
+#+BEGIN_SRC rust
+trait Shape
+    : AddAssign<Vector3<f32>>
+    + SubAssign<Vector3<f32>>
+{
+    fn center(&self) -> Point3<f32>;
+
+    fn set_pos(&mut self, Point3<f32>);
+}
+#+END_SRC
+
+Supported shapes are listed here with their constructors. Their members are public but not always 
+obvious; for struct literal initialization please refer to the documentation.
+
+The following shapes are currently available:
+
+** Plane
+#+BEGIN_SRC rust 
+struct Plane{ n: Vector3<f32>, d: f32 }
+#+END_SRC
+
+Three-dimensional plane. Extends infinitely, as you would expect from a plane. A point $P$ lies on the plane 
+iff $\vec n \cdot  P = d$. 
+
+Usually planes are initialized by casting from a triple of points:
+
+#+BEGIN_SRC rust
+let plane = Plane::from((Point3::new(1.0, 0.0, 0.0),
+                         Point3::new(0.0, 0.0, 1.0),
+                         Point3::new(0.0, 0.0, 0.0)));
+#+END_SRC
+
+** Ray
+#+BEGIN_SRC rust 
+struct Ray{ p: Point3<f32>, d: Vector3<f32> }
+#+END_SRC
+Ray originating at point $p$ extending infinitely in the direction $\vec d$.
+
+** Segment
+#+BEGIN_SRC rust
+struct Segment{ a: Point3<f32>, b: Point3<f32> }
+#+END_SRC
+
+Finite line segment orignitating at $a$ and ending at $b$. Can be constructed from a pair of points:
+
+#+BEGIN_SRC rust
+let segment = Segment::from((Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)));
+#+END_SRC 
+
+** Triangle
+#+BEGIN_SRC rust 
+struct Triangle{ a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32> }
+#+END_SRC
+
+** Rectangle
+#+BEGIN_SRC rust
+struct Rectangle {
+    c: Point3<f32>,
+    u: [Vector3<f32>; 2],
+    e: [f32; 2],
+}
+#+END_SRC
+
+** AABB
+#+BEGIN_SRC rust
+struct AABB {
+    c: Point3<f32>,
+    r: Vector3<f32>,
+}
+#+END_SRC
+
+An Axis-Aligned Bounding Volume, more commonly referred to as an AABB, is a three-dimensional rectangular 
+prism assumed to be aligned with the three primary axis. 
+
+AABBs are closed volumes, that is, a point is contained within an axis if the distance from the point to the 
+AABB's center is less than *or equal* to the radius for the given axis.
+
+The most common way to construct an ~AABB~ to use the ~BoundedBy~ trait:
+
+#+BEGIN_SRC rust
+use mgf::{BoundedBy, AABB, Sphere};
+
+let s = Sphere{ c: Point3::new(0.0, 0.0, 0.0), r: 1.0 };
+let aabb: AABB = s.bounds();
+#+END_SRC
+
+** Sphere
+#+BEGIN_SRC rust
+struct Sphere {
+    c: Point3<f32>,
+    r: f32,
+}
+#+END_SRC
+
+A sphere is a point and a distance. Spheres, like AABBs, are closed volumes.
+
+** Capsule
+#+BEGIN_SRC rust
+struct Capsule {
+    a: Point3<f32>,
+    d: Vector3<f32>,
+    r: f32,
+}
+#+END_SRC
+
+A capsule is a sphere swept along a line. We define this line as $L(t) = a + t * \vec d$, where $0 \le t \le 1$.
+
+** Moving geometries
+
+By default, a geometry is an entity in space with constant position. Thus, the velocity of a geometry is 
+implicitly zero. A geometry can be given a positional derivative for an instant in time by using the
+~Moving~ structure:
+
+#+BEGIN_SRC rust
+struct Moving<T: Copy + Clone>(pub T, pub Vector3<f32>);
+#+END_SRC
+
+The simplest way to construct a moving geometry is to use the ~sweep~ function:
+
+#+BEGIN_SRC rust
+let sphere = Sphere{ c: Point3::new(0.0, 0.0, 0.0), r: 1.0 };
+let velocity = Vector3::new(0.0, 2.0, 0.0);
+let moving_sphere = Moving::sweep(sphere, velocity);
+#+END_SRC 
+
+The path of the moving geometry with an initial position $P$ and velocity $\vec v$ is defined as 
+$L(t) P + \vec v * t$ where $0 \le t \le 1$.
+
+Because a moving geometry represents a changing position over time and has no single fixed position, it is not
+considered a Shape and does not implement the Shape trait. 
+
+** Compound geometries
+
+~Spheres~ and ~Capsules~ can be assembled to from an aggregate structure called a ~Compound~. 
+A ~Compound~ satisfies ~Shape~ and thus can be efficiently moved around in space. Additionally,
+~Compound~ geometries can be rotated and collided with any geometry that can collide with a 
+~Sphere~ or ~Capsule~. However, because ~Compound~ uses a ~Vec~ internally to store its geometries,
+it cannot be made ~Moving~. Therefore a ~Compound~ type is best used with static geometries.
+To create moving compound objects it is recommended to use a [[Rigid Bodies][Rigid Body]].
+
+#+BEGIN_SRC rust
+let components = vec![ 
+        Component::from(Sphere{ c: Point3::new(-5.0, 0.0, 0.0), r: 1.0 }),
+        Component::from(Capsule{ a: Point3::new(5.0, 0.0, 0.0), d: Vector3::new(0.0, 1.0, 0.0), r: 1.0 })
+];
+let mut compound = Compound::new(components);
+#+END_SRC
+
+A ~Compound~ is constructed by passing it a ~Vec~ of ~Components~. A ~Component~ is a variant type
+that can either be a ~Sphere~ or a ~Capsule~. The easiest way to create a ~Component~ is with the
+~From~ function.
+
+** Mesh 
+
+#+BEGIN_SRC rust
+struct Mesh {
+    disp: Vector3<f32>,
+    verts: Vec<Vertex>,
+    faces: Vec<(usize, usize, usize)>
+    bvh: BVH<AABB, usize>, 
+}
+
+struct Vertex {
+    p: Point3<f32>,
+    n: Vector3<f32>,
+}
+#+END_SRC
+
+MGF supports triangles meshes through the ~Mesh~ data structure. Internally a ~Mesh~ is an array of ~Vertex~
+with a [[Bounding Volume Hierarchy][~BVH~]] storing the faces as a triple of indices. 
+
+#+BEGIN_SRC rust
+let mut mesh = Mesh::new();
+let a = mesh.push_vert(Vertex{ p: Point3::new(1.0, 0.0, 0.0), n: Vector3::new(0.0, 1.0, 0.0) });
+let b = mesh.push_vert(Vertex{ p: Point3::new(0.0, 0.0, 1.0), n: Vector3::new(0.0, 1.0, 0.0) });
+let c = mesh.push_vert(Vertex{ p: Point3::new(0.0, 0.0, -1.0), n: Vector3::new(0.0, 1.0, 0.0) });
+mesh.push_face((a, b, c));
+#+END_SRC
+
+More conveniently MGF supports loading triangle meshes from resource files. Currently only ~.ply~ files are 
+supported but more will be in the future.
+
+A ~Mesh~ can collide with any object that a ~Triangle~ can collide with. 
+
+* Collision Detection 
+
+MGF supports both broad and narrow phase collision detection in one unified interface. Because the amount 
+of information desired varies throughout both phases, the collision interface is designed to provide for a wide
+variety of different collision types.
+
+One feature that makes MGF stand out from most physics frameworks of its extensive use of continuous collisision 
+detection as opposed to discrete for moving objects. Although MGF does support discrete collision detection it is
+use mostly in broad phase detection. As far as I can tell, MGF is the only framework available on the internet 
+right now that provides a full non-approximate solution for moving capsule collisions with other capsules and 
+polygonal geometries.
+
+** Discrete vs. Continuous 
+
+In discrete detection, an object is moved and collision penetration is determined. In continuous collision 
+detection, we attempt to determine the time along a moving object's path that it collides with another object.
+
+For my game I envisioned there would be a lot of moving objects, some of them possibly moving very fast, and wanted
+to make the collisions as accurate and as interesting as possible. Thus, I chose continuous detection.
+
+One may think that the advantage provided by continuous collision detection is that, if properly utilized,
+geometries will never overlap. This is the initial allure of continuous collision detection and it is a completely 
+false. Continuous collision detection is most useful when combined with discrete collision detection in order to
+improve the collision information provided to the physics resolution step. 
+
+With discrete collision detection, it is possible for two fast moving objects to phase through each other during 
+he physics step. With continuous collision detection, even though the two objects will briefly appear to have passed 
+through each other, the collision information provided will allow for the two objects to be correctly resolved by the
+physics engine in the next step. 
+
+Additionally, because all moving geometries are checked to determine if they are already colliding with a geometry, 
+any contact with a time t = 0 can be considered a resting contact.
+
+In MGF, continuous collision detection routines are provided for geometries contained within a ~Moving~ struct.
+
+
+
+** Collider traits
+
+Objects implement collision of various types by implementing various different collider traits:
+
+*** Overlaps
+
+Overlaps is the simplest type of collision and only determines if two objects are overlapping and nothing else.
+Overlaps collisions are not supported for any moving geometry collision, nor is it supported for any ray or segment
+collision. 
+
+#+BEGIN_SRC rust
+let sphere_a = Sphere{ c: Point3::new(0.0, 0.0, 0.0), r: 1.0 };
+let sphere_b = Sphere{ c: Point3::new(0.0, 3.0, 0.0), r: 2.0 };
+let sphere_c = Sphere{ c: Point3::new(0.0, 3.0, 0.0), r: 1.0 };
+
+// Using collides method:
+assert!(sphere_a.overlaps(&sphere_b));
+
+assert!(sphere_a.overlaps(&sphere_b));
+assert!(!sphere_a.overlaps(&sphere_c));
+#+END_SRC
+
+*** Contains 
+
+~Contains~ determines if the geometry being passed to ~collide~ is completely contained within the receiver geometry.
+As with ~Overlaps~, ~Contains~ provides no information other than if the collision existed or not. 
+
+#+BEGIN_SRC rust 
+let container_sphere = Sphere{ c: Point3::new(0.0, 0.0, 0.0), r: 2.0 };
+let contained_sphere = Sphere{ c: Point3::new(0.0, 1.0, 0.0), r: 1.0 };
+let overlapped_sphere = Sphere{ c: Point3::new(0.0, 2.0, 0.0), r: 1.0 };
+
+assert!(container_sphere.contains(&contained_sphere));
+assert!(!contained_sphere.contains(&container_sphere));
+assert!(container_sphere.overlaps(&overlapped_sphere));
+assert!(!container_sphere.contains(&overlapped_sphere)); 
+#+END_SRC
+
+*** Intersection
+
+#+BEGIN_SRC rust 
+struct Intersection {
+    p: Point3<f32>,
+    t: f32,
+}
+#+END_SRC
+
+Intersection models a continuous collision with only one point of contact, i.e. one of the objects does not 
+have any volume. ~Ray~ and ~Segment~ collisions return this object. Since a ~Ray~ extends infinitely, it is
+possible for $t \ge 1$. 
+
+Any ~Ray~ can collide with all stationary objects and some moving objects, with hopefully support for more moving
+objects in the future. Any valid ~Ray~ collision is also a valid ~Segment~ collision.
+
+#+BEGIN_SRC rust  
+let sphere = Sphere{ c: Point3::new(0.0, 0.0, 0.0), r: 1.0 };
+// ray is tangent to surface of sphere
+let ray = Ray{ p: Point3::new(-2.0, 1.0, 0.0), d: Vector3::new(1.0, 0.0, 0.0) };
+// seg1 does not collide within [0, 1], seg2 does.
+let seg1 = Segment::from((Point3::new(-2.0, 1.0, 0.0), Point3::new(1.0, 1.0, 0.0)));
+let seg2 = Segment::from((Point3::new(-2.0, 1.0, 0.0), Point3::new(0.0, 1.0, 0.0)));
+
+assert_eq!(ray.intersection(&sphere), Some(Intersection{ t: 2.0, p: Point3::new(0.0, 1.0, 0.0), }));
+assert_eq!(!seg1.intersection(&sphere), None);
+assert_eq!(seg2.intersection(&sphere), Some(Intersection{ t: 1.0, p: Point3::new(0.0, 1.0, 0.0), }));
+#+END_SRC
+
+*** Contact
+
+#+BEGIN_SRC rust 
+struct Contact {
+    a: Point3<f32>,  // Contact point for collider in global coordinates
+    b: Point3<f32>,  // Contact point for collidee
+    n: Vector3<f32>, // Collision normal
+    t: f32,          // Time of impact
+}
+#+END_SRC
+
+~Contact~ describes the information most commonly required in narrow phase detection and models a point of 
+contact between two geometries, at least one of which is moving. The time of impact is guaranteed to be within 
+the interval $[0, 1]$. A ~Contact~ with $t = 0$ represents a collision that is occurring at the beginning of the 
+time step. Because the geometries we support are closed spaces, a ~Contact~ with $t = 0$ is guaranteed to 
+have occurred on a previous frame. This allows us to easily make assumptions on whether or not a contact is 
+considered a resting contact.
+
+#+BEGIN_SRC rust 
+let velocity = Vector3::new(0.0, 2.0, 0.0);
+let moving_sphere = Moving::sweep(sphere, velocity);
+let stationary_sphere = Sphere{ c: Point3::new(0.0, 4.0, 0.0), r: 2.0 };
+assert!(moving_sphere.contacts(
+                &stationary_sphere,
+                | c: Contact | {
+                    assert_eq!(c.t, 0.5);
+                    assert_eq!(c.a, Point3::new(0.0, 2.0, 0.0));
+                    assert_eq!(c.a, c.b);
+                }
+));
+#+END_SRC 
+
+Some moving collisions may produce multiple points of contacts. Capsules in particular can produce at most two
+points when colliding with planar geometries. This is necessary to keep the capsule balanced during physics 
+resolution. For example, when a capsule is perpendicular to the normal of a planar object, we can properly 
+implement a balanced capsule by returning a contact point for the two ends of the capsule's segment that 
+collide with the planar geometry:
+
+#+BEGIN_SRC rust
+let tri = Triangle::from((Point3::new(2.0, 0.0, 0.0), 
+                          Point3::new(0.0, 0.0, 2.0),                        
+                          Point3::new(0.0, 0.0, -2.0)));
+let moving_capsule = Moving::sweep(Capsule { 
+                                        a: Point3::new(1.5, 2.0, 0.0), 
+                                        d: Vector3::new(-1.0, 0.0, 0.0),
+                                        r: 1.0,
+                                   }, Vector3::new(0.0, -1.0, 0.0));
+
+let mut contacts = Vec::new();
+tri.contacts(&moving_capsule, |c: Contact|{ contacts.push(c) });
+
+assert_eq!(contacts.len(), 2);
+assert_eq!(contacts[0].a, Point3::new(1.5, 0.0, 0.0));
+assert_eq!(contacts[1].a, Point3::new(0.5, 0.0, 0.0));
+#+END_SRC
+
+Moving capsule/polygon collisions are quite complicated and likely expensive. More details on 
+its implementation can be found in the [[Dynamic capsule collision detection][algorithms section]].
+
+*** LocalContact
+
+#+BEGIN_SRC rust
+struct LocalContact {
+    local_a: Point3<f32>,
+    local_b: Point3<f32>,
+    global: Contact,
+}
+#+END_SRC
+
+~LocalContact~ is the same collision type as a ~Contact~, except that the contact point for each object is
+also stored relative to the center of the object upon the time of collision. This contrasts with a regular
+~Contact~ where the only the global coordinates for each contact point is stored. 
+
+Any collision that can produce a ~Contact~ can produce a ~LocalContact~. ~LocalContact~ is far more often
+useful in the context of MFG and is the recommended choice.
+
+When a collision occurs at a time $t < 1.0$, the global contact points will not be useful in computing the 
+penetration depth because at the time of impact the two objects have yet to interpenetrate. By displacing 
+the two objects centers at the end of their motion by the local coordinates we can find the penetration 
+depth of the collision.
+
+#+BEGIN_SRC rust 
+let sphere_a = Moving::sweep(Sphere{ c: Point3::new(-1.5, 0.0, 0.0), r: 1.0 }, Vector3::new(1.0, 0.0, 0.0));
+let sphere_b = Moving::sweep(Sphere{ c: Point3::new(1.5, 0.0, 0.0), r: 1.0 }, Vector3::new(-1.0, 0.0, 0.0));
+
+assert!(sphere_a.local_contacts(&sphere_b, |lc: LocalContact| {
+    assert_eq!(lc.local_a, Point3::new(1.0, 0.0, 0.0));
+    assert_eq!(lc.local_b, Point3::new(-1.0, 0.0, 0.0));
+    assert_eq!(lc.global.t, 0.5);
+    assert_eq!(lc.global.a, Point3::new(0.0, 0.0, 0.0));
+    assert_eq!(lc.global.b, Point3::new(0.0, 0.0, 0.0));
+}));
+#+END_SRC
+
+
+** Manifold generation 
+
+For collisions that may produce multiple contacts, such as capsule/planar collisions or collisions between
+arbitrary possibly convex meshes, it is recommended to build a ~Manifold~. 
+
+A ~Manifold~ is a dynamic array of ~LocalContacts~. Creating and adding contacts to the ~Manifold~ is a 
+similar process to using a ~Vec~:
+
+#+BEGIN_SRC rust 
+let tri = Triangle::from( /* ... */ );
+let moving_capsule = Moving::sweep( /* ... */ );
+
+let mut manifold = Manifold::with_capacity(4);
+tri.collide(&moving_capsule, |lc: LocalContact|{ manifold.push(lc) });
+#+END_SRC
+
+Currently ~Manifolds~ are implemented on top of a standard ~Vec~, which unfortunately requires a heap 
+allocation. In the future this is likely to change to a fixed size array type, as a good rule in contact 
+generation is that no more than four contact points is necessary to perform good enough physics resolution.
+
+
+** Broad phase detection
+
+In general broad phase collision detection involves reducing a complex geometry to a relatively simple
+bounding volume - such as a sphere or a box - and keeping track of this simpler geometry in a bounding volume 
+hierarchy or a spatial partitioning tree. MGF only supports Bounding Volume Hierarchies for now but support
+for spatial partitioning structures may come in the future.
+
+*** Bounds 
+
+A ~Bound~ is a simple geometry that completely subsumes the possibly more complex geometry it is said to be 
+bounding. Objects that satisfy the ~Bound~ trait can combine with, [[Overlaps][~Overlap~]], and [[Contains][~Contain~]] each other. 
+Additionally, a ~Bound~ may be expanded, shrunk, rotated, has a surface area, and satisfies ~Shape~.
+
+#+BEGIN_SRC rust
+trait Bound
+    : Copy
+    + Add<Vector3<f32>, Output = Self>
+    + Sub<Vector3<f32>, Output = Self>
+    + Mul<f32, Output = Self>           // Scalar multiply
+    + Div<f32, Output = Self>           // Scalar divide
+    + Add<f32, Output = Self>           // Scalar extend
+    + Sub<f32, Output = Self>           // Scalar shrink
+    + Shape
+    + Collider<Overlaps, Self>
+    + Collider<Contains, Self>
+{
+    /// Produce a bound that encloses the two arguments.
+    fn combine(&Self, &Self) -> Self;
+
+    /// Rotate the bound in place.
+    fn rotate(&self, Quaternion<f32>) -> Self;
+
+    /// Surface areas is simply an arbitrary metric of the size of an object,
+    /// but that's what we choose here.
+    fn surface_area(&self) -> f32;
+}
+#+END_SRC
+
+MGF supports two types of bounding volumes, the dead simple [[Sphere]] and the slightly more complex [[AABB]]. 
+A geometry can be converted into a bounding volume if it satisfies ~BoundedBy~ for the bound:
+
+#+BEGIN_SRC rust
+trait BoundedBy<B: Bound> {
+    fn bounds(&self) -> B;
+}
+#+END_SRC
+
+Every geometric object supported by MGF is bounded by both an ~AABB~ and a ~Sphere~. In fact, both the
+spherical bound of an ~AABB~ can be found as well as an enclosing ~AABB~ for any ~Sphere~. Converting 
+back and forth between an ~AABB~ and a ~Sphere~ is not idempotent however, the bounding volume returned
+will grow each time the ~AABB~ is converted to a ~Sphere~.
+
+Not only are all geometric objects bounded, but ~Moving~ geometries are as well. If a geometry ~T~ satisfies
+~BoundedBy~ for some ~Bound~, ~Moving<T>~ satisfies that bound as well.
+
+By allowing a ~Bound~ to be expanded and shrunk proxy bounds can be easily created with a simple addition.
+
+*** Bounding Volume Hierarchy
+
+A dynamic tree structure called a Bounding Volume Hierarchy (or ~BVH~) is provided to reduce the number
+of expensive collisions checks needed each world step. A ~BVH~ is declared for a given ~Bound~ type and
+will store the bound of any geometry inserted into the ~BVH~ in a manner that reduces the number of 
+computations required to find all of the bounds in ~BVH~ that overlap a given ~Bound~. 
+
+In addition to storing the bound of the object, ~BVH~ can store a value associated the ~Bound~.
+
+When inserting ~BVH~ returns a ~usize~ representing the internal ID of the bounds. This ID allows for a 
+bound to be removed from the ~BVH~ later.
+
+#+BEGIN_SRC rust
+let sphere_a = Sphere{ c: Point3::new(0.0, 5.0, 0.0), r: 1.0 };
+let sphere_b = Sphere{ c: Point3::new(0.0, 8.0, 0.0), r: 1.0 };
+let sphere_c = Sphere{ c: Point3::new(3.0, 0.0, 0.0), r: 1.0 };
+
+let mut bvh: BVH<AABB, usize> = BVH::new();
+let bvh_id_a = bvh.insert(&sphere_a, 1);
+let bvh_id_b = bvh.insert(&sphere_b, 2);
+let bvh_id_c = bvh.insert(&sphere_c, 3);
+
+assert!(bvh.query(&sphere_a, |&id|{ assert_eq!(id, 1); }));
+assert!(bvh.query(&sphere_b, |&id|{ assert_eq!(id, 2); }));
+assert!(bvh.query(&sphere_c, |&id|{ assert_eq!(id, 3); }));
+#+END_SRC
+
+* Physics 
+
+MGF does not provide or make any assumptions or impose any structure on the physics or collision pipeline 
+in the game. Resolving physics is therefor completely functional and can be performed on a case by case basis.
+
+** Rigid Bodies
+
+Creating a rigid body is facilitated through the aptly named ~RigidBody~ structure.
+A ~RigidBody~ is made from a ~Compound~ geometry specifying its volume and various information 
+required to emulate Newtonian mechanics. 
+
+Only the following pieces of information are necessary to create a ~RigidBody~:
++ The list of geometric components of the body and their masses
++ The coefficient of restitution of the body. This is a number between 0 and 1 that defines how
+  much energy and object retains during a collision, with zero being no energy and one being all
+  of the energy.
++ The amount of friction to apply to the object. This is defined as the ratio of normal force 
+  applied tangentially to an object during collision.
++ A world force to continually apply to the body. Used to simulate gravity.
+
+To create a ~RigidBody~, provide a ~Vec~ of ~Components~, a ~Vec~ of masses, and the parameters
+described above. ~RigidBody~ will automatically calculate the center of mass and the moment of 
+inertia tensor. These calculations are somewhat expensive so it is recommended that new a 
+~RigidBody~ should be created by ~cloning~ a previously constructed ~RigidBody~.
+
+A ~RigidBody~ is a ~Shape~ so setting its position is as simple calling ~+=~, ~-=~ or ~set_pos~.
+
+A ~RigidBody~ is a moving geometry, although it is not recommended to directly set the velocity.
+Instead, use the method ~apply_impulse~ to add a linear or rotational velocity.
+
+Maintaining a ~RigidBody~ is as simple as calling ~integrate~ every frame. ~integrate~ will 
+calculate the new position and rotation of the body automatically.
+
+#+BEGIN_SRC rust
+const RESTITUTION: f32 = 0.5;
+const FRICTION: f32 = 0.1;
+let gravity = Vector3::new(0.0f32, -9.8, 0.0);
+let body = RigidBody::new(RESTITUTION, FRICTION, gravity,
+                          vec![ Component::from(Sphere{ c: Point3::new(0.0, 0.0, 0.0), 
+                                                        r: 1.0 }) ],
+                          vec![ 1.0 ]);
+
+// Integration should take place at the beginning of each timestep.
+body.integrate(1.0);
+assert_eq!(body.v, Vector3::new(0.0, -9.8, 0.0);
+#+END_SRC
+
+** Resolving collisions
+
+Determining if two ~RigidBodies~ are colliding and resolving the collision should it exist
+is very simple. First, at least one contact point needs to be generated. MGF can resolve 
+a collision one contact at a time but it is not recommended for the simplest use cases. Instead,
+a ~Manifold~ should be generated.
+* Pool Container
+
+MGF provides a container type called ~Pool~ that allows for items to be efficiently inserted and 
+removed without changing the indices of the other items stored in the container. 
+
+Removing an object from the ~Pool~ is strictly $O(1)$. 
+
+Inserting an object into a ~Pool~ attempts to reuse indices that have previously been removed in 
+order to improve cache locality and reduce the need to perform a ~realloc~. If the number of objects
+inside a pool never exceeds the maximum capacity of its internal array storage, then insertion 
+is _always_ efficient. If the maximum capacity is exceeded however an expensive ~realloc~ cannot be
+avoided.
+
+A ~Pool~ can be mostly used as a drop-in replacement for ~Vec~. It provides most of the same convenience
+functions as well as satisfying ~IntoIter~.
+
+#+BEGIN_SRC rust
+let mut pool: Pool<usize> = Pool::new();
+
+let id0 = pool.push(0);
+let id1 = pool.push(1);
+let id2 = pool.push(2);
+let id3 = pool.push(3);
+
+assert_eq!(id0, 0);
+assert_eq!(id3, 3);
+
+pool.remove(id1);
+pool.remove(id2);
+
+assert_eq!(pool[id0], 0);
+assert_eq!(pool[id3], 3);
+
+assert_eq!(pool.iter().map(|&u|{u}).collect::<Vec<usize>>(), vec![0, 3]);
+#+END_SRC
+
+* Loading Resources
+
+* Future Work
+
+There are a lot of things that I would like to see be changed or improved in MGF, and I am intent on
+working on them pursuant to me being physically and financially able. Working on this library full time
+would be an enjoyable experience but frankly I doubt there is much demand right now. I'm not taking 
+donations for this project. However, if you would like to donate, please send me an email (~map@maplant.com~)
+letting me know so I can gauge if that is a thing many people would like.
+
+Besides not sending me money, feel free to contribute to the project on GitHub! MGF is open source and 
+welcome to anyone's code! 
+
+** TODO Implement any missing collisions
+
+There are a few collisions that are not implemented as of right now, such as ~Ray~ / ~Moving<Capsule>~ 
+intersections. 
+
+** TODO Add Oriented Bounding Boxes
+
+~AABBs~ are nice but a more general ~Box~ type would be very useful. A lot of very interesting collision
+algorithms would have to be implemented in order to fully support these, so I'm excited to give it a try.
+
+** TODO Add skeletal animation framework
+
+When I become more familiar with the subject I will be adding a skeletal animation framework with support
+for inverse kinematics. I believe this the next thing I will be focusing my attention on.
+
+** TODO Procedural macro goodness
+
+One of the interesting points Jonathon Blow made in his ~Jai~ webinars was that he typically disliked 
+macro systems because they tend to be implemented as special macro-specific languages on top of the actual
+language. Jonathon points out that this is jarring and very limiting and he would rather the language used
+to create macros be the actual language used to program everything else. This property in languages is 
+called Homoiconicity, and Rust actually exhibits this property to a degree. Besides Rust's typical route
+for creating macros ~macro_rules!~, Rust supports macros that pass their token lists to functions. These
+are called procedural macros, and it is how most custom derive attributes are implemented. 
+
+Procedural macros allow us to do a wide range of things, and in the future I want them to be an integral 
+part of MGF. My dream is to provide a custom derive that automatically implements a ~World~ class with
+step, collide, and draw visible objects. Some of this code has been written but it is far from worthy of 
+a release.
+
+** TODO More resource loaders
+
+As of right now the only file type you can use to load a ~Mesh~ is ~.ply~, which is laughable. Hopefully
+more loaders will accumulate as the library is used.
+
+** TODO Support Serde 
+
+MGF geometries should support serialization through the Serde crate. This is a very necessary feature.
+
+** TODO Parallelism
+
+MGF has no notion of parallelism and it really should. Most games today use parallelism to some extend,
+surely there's something that this framework can provide to facilitate that. 
+
+** TODO Improve test coverage 
+
+While a fair portion of MGF is covered with tests, there are many code paths that are not and need to be
+tested.
+
+* License
+
+MGF is licensed under the GNU Lesser General Public License version 3. If this license is not 
+suitable for your project feel free to send me an email at ~map@maplant.com~ and we can work out
+an agreement that suits your needs.
+
+* Algorithm details
+
+Some of the algorithms used in MGF are unique as far as I can tell. In this section I'll go into more
+details explaining how they work.
+
+** BVH Implementation
+
+The ~BVH~ implementation provided by MGF is based on the ~Box2D~ ~DynamicTree~ with some minor tweaks.
+Nodes in the ~BVH~ are stored internally in a ~Pool~. Using an internal ~Pool~ type ensures that we can
+insert and remove nodes quickly while retaining the cache locality benefits of using an array.
+
+Using a contiguous memory type to store tree data structures does imply that the data structure will
+be maximally local. In addition, increasing the number of objects stored in the ~BVH~ will increase the
+likelihood that any two given Nodes in the BVH are in separate cache sets.
+
+** Dynamic capsule collision detection
+
+Because moving sphere collision detection algorithms are extremely well documented, I will not discuss 
+hem here. If you are looking for a good resource on the subject, I recommend reading 
+[[http://realtimecollisiondetection.net/][Real Time Collision Detection by Christer Ericson]]. If you read this book please be sure to read the 
+[[http://realtimecollisiondetection.net/books/rtcd/errata/][errata]] as some of the information on moving sphere collisions and capsule overlap is incorrect. 
+
+The rest of this section assumes you understand how to perform ray/sphere, ray/capsule, and moving 
+sphere/static sphere intersections.
+
+Moving capsule/static sphere collision is extremely similar to moving sphere/static sphere collision, 
+except instead of colliding a ray with a single sphere, we collide it with the capsule that has a sum of 
+the radii.
+
+When I started this project, I could not find any resource on moving capsule collisions. To the best of
+my knowledge, no resource on the subject is readily available online. Therefore, this may be the first.
+
+Dynamic collision detection for capsules was one of the hardest geometry problems I ever had the pleasure
+of working on. It felt extremely fulfilling to finally tackle the problem.
+
+I apologize for the poor quality of the writing in this section. It was written in haste.
+
+There are two collision detection routines in particular we need to implement:
+
+*** Moving capsule and static capsule collision 
+
+If we wanted to simply detect if two static capsules overlap, we could use the method outlined in 
+Real Time Collision Detection. This involves finding the smallest distance between the two capsules' 
+segments and testing if it less than or equal to the sum of the capsules' radii. 
+
+Unfortunately, using the code provided in Real Time Collision Detection will fail if the two capsules
+are parallel within some tolerance. That is because the code for the distance between two segments does 
+not handle if the two segments are parallel within some tolerance. 
+
+The solution to this problem is to project the one of the segments onto the other. The segment being
+projected on with the endpoints $A$ and $B$ can be described as the equation $L(t) = A + (B-A)*t$ where 
+$0 \le t \le 1$. Thus, when we project the second segment we can find a $t_{min}$ and $t_{max}$ such that the 
+projected segment can be described as $L_{proj}(t) = L(t)$ but with the modified domain $t_{min} \le t \le t_{max}$. 
+
+With this $t_min$ and $t_{max}$ we can find a closest point on the two segments to find the distance between. 
+If $t_{max} < 0$ or $t_{min} > 1$, then the closest points are end points of the segments. Otherwise, the intervals 
+overlap, and we can simply choose whichever $t_{min}$ or $t_{max}$ is in the interval $[0, 1]$. 
+
+Colliding a moving capsule with a static capsule is slightly more complicated. 
+
+Our goal if we can is to reduce the static capsule to a sphere we can collide with the moving capsule. 
+To this end we create two segments with their origin at each end of the moving capsule and a direction equal
+to the velocity of the moving capsule, and determine the two points in the static capsule's segment that are
+ closest to either segment. From these two points we can create another segment and determine the closest 
+point on this segment to the moving capsule's segment. If such a point exists, all we need to do is decompose
+the static capsule to a sphere at this point and perform a moving capsule/static sphere detection. 
+
+If no such point was found, the capsules are parallel, and we need to use the power of intervals to solve
+the problem. Once we know the real distance between the two capsules using the interval method, we can 
+determine at what point the capsules will collide by determining the time when this real distance equals 
+zero. How this is done exactly is slightly complicated and best explained by reading the source code for
+this algorithm, which you can find here: [ CAPSULE / CAPSULE DETECTION SOURCE LINK ]
+
+*** Moving capsule and polygon collision 
+
+Moving capsule and polygon collision is pretty simple in its most conceptual form: as with moving sphere and 
+polygon collision, we need to collide the ray originating at the start of the capsule's segment with the 
+Minkowski sum of the polygon and the capsule. However, there are additional steps we need to take before doing 
+this in order to ensure that we produce all of the contacts necessary to resolve the capsule correctly. 
+The collision will produce multiple contacts if and only if the capsule's segment is perpendicular to the normal 
+of the planar decomposition of the polygon. To understand why this is necessary, consider a polygon lying flat
+on a triangle with the segment protruding over the edge of the triangle. If we were to provide only the start 
+of the capsule's segment as a contact, the capsule would begin to rotate into the polygon. Instead, we must
+provide the start of the capsule's segment as a contact as well as the point in which the segment intersects 
+with the edge of the triangle it protrudes. This way, the two contacts will provide the correct information 
+necessary to balance the capsule on the edge of the triangle. Should the second contact point be behind the 
+center of mass of the capsule, the capsule will begin to rotate and fall off of the triangle, as is expected. 
+
+Determining the contacts in this case is the first thing we do. The test is simple: check if either end point
+of the capsule collides with the polygon, and if both collide choose the first collision. If a collision occurs 
+we can publish this contact immediately. If the capsule is perpendicular to the normal of the planar decomposition 
+of the triangle, we perform a 2D intersection with the silhouette of the capsule's line segment and the polygon. 
+The second contact is either the end point of the segment or the first point of the segment that intersects with 
+the polygon edge.
+
+If neither end of the capsule collides with the polygon, we need to revert to ray testing with the Minkowski 
+sum of each edge of the polygon and the capsule.
+
+Producing two contacts is necessary in a second situation, in which a capsule collides with an edge parallel
+to the capsule's segment. 

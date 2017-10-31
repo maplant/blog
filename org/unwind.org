@@ -1,0 +1,163 @@
+#+TITLE: Sticking a Hand Through Time: Adventures on the call stack
+#+AUTHOR: Matthew Plant
+#+EMAIL: map@maplant.com
+#+LINK_HOME: index.html
+#+LINK_UP: index.html
+#+OPTIONS: author:t email:t toc:nil
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="css/stylesheet.css">
+
+[[./index.html][Back to my homepage]]
+
+If you're an experienced C programmer and browse the web you're 
+likely to be familiar with the trope: technical C language article with a
+ title that some variation of "(number) cool C tricks". Invariably I've 
+clicked on those links and have always been disappointed. I know those 
+tricks. They're obvious. I've read the C standard and by god I 
+understood a nonzero portion of it! I want to see /actual/ tricks, like the
+fact that you can have one line switch statements
+
+#+BEGIN_SRC c
+switch(x)
+    case 1: case 2: case 3: case 4: printf("What the fuck?");
+#+END_SRC
+
+Not too cool, fine. But what about nonlocal variable access? That 
+seems kind of cool. You can unwind the stack and inspect variables in 
+GDB, but can you do it in your own C code?
+
+The answer is in the question, as GDB is written in C. It seems 
+logical therefore to state that if you can do it to separate programs 
+you can probably do it to yourself. And you definitely can. And it's 
+easy!
+
+Do you understand the frame pointer? I'll handle this question with two cases:
+
+In the case you responded with "I have no idea what that is": the 
+frame pointer points to a location on the stack that arguments and 
+variables in a function can be accessed from with a fixed offset. The 
+location on the stack that the frame pointer points to is filled with 
+the value of the calling function's frame pointer. Thus, a debugger can 
+unwind the call stack at any point on it and inspect variables stored by
+ calling functions. After all, if variables are accessed by offsets to 
+the frame pointer, the address of a variable can be found for any frame 
+pointer.
+
+Now that you (probably don't) understand frame pointers, let me also 
+cover the case "I do understand frame pointers" for you. I want you to 
+know that they're not necessary. The compiler can stop using it. 
+Functions need not create one, as the frame pointer is typically callee 
+saved. Whenever I write assembly, I hardly use it, unless I'm writing 
+recursive functions that would be hard to debug otherwise. Now I'm sure,
+you, who understood frame pointers already knew this, but I wanted to 
+make sure.
+
+Given this knowledge, we can make a function that unwinds the stack 
+and grabs an earlier value for a variable. We can't do it in pure C 
+(inline assembly is implementation defined ;) so we will need one line 
+of assembly per architecture. Take a look:
+
+#+BEGIN_SRC c
+void
+unwind(size_t depth, char *addr, size_t len)
+{
+    size_t i;
+    struct a { struct a *next; } *ebp;
+    ptrdiff_t offset;
+
+#if __x86_64__
+    asm volatile("movq      %%rbp, %0;" : "=r" (ebp));
+#else
+    asm volatile("movl      %%ebp, %0;" : "=r" (ebp));
+#endif
+
+    /* Enter the first stack frame and get the offset of the variable. */
+    ebp = ebp->next;
+    offset = addr - (char *)ebp;
+
+    for (i = 0; i < depth; i++)
+        ebp = ebp->next;
+
+    for (i = 0; i < len; i++)
+        addr[i] = (((char *)ebp + offset))[i];
+}
+
+#define UNWIND(d, v) unwind(d, (char *)&v, sizeof(v))
+#+END_SRC
+
+So simple! Notice that unwind with a depth of 0 is just copying the 
+variable to itself. Unfortunately this is $O(n)$ /per/ variable, so
+if you want to access a bunch of variables this can get slow. Probably
+not that much slower, but we can still do better.
+
+#+BEGIN_SRC c
+void
+unwind_n(size_t depth, size_t n, ...)
+{
+    size_t i, j;
+    va_list ap;
+    struct a { struct a *next; } *ebp;
+    struct {
+        size_t size;
+        char *addr;
+        ptrdiff_t offset;
+    } vars[n];
+
+#if __x86_64__
+    asm volatile("movq      %%rbp, %0;" : "=r" (ebp));
+#else
+    asm volatile("movl      %%ebp, %0;" : "=r" (ebp));
+#endif
+
+    ebp = ebp->next;
+
+    va_start(ap, n);
+    for (i = 0; i < n; i++) {
+        vars[i].offset = (vars[i].addr = va_arg(ap, char *))
+            	- (char *)ebp;
+        vars[i].size = va_arg(ap, size_t);
+    }
+    va_end(ap);
+
+    for (i = 0; i < depth; i++)
+        ebp = ebp->next;
+
+    for (i = 0; i < n; i++)
+        for (j = 0; j < vars[i].size; j++)
+            vars[i].addr[j] = (((char *)ebp + vars[i].offset))[j];
+}
+#+END_SRC
+
+Yay! Now it's a little faster. It even uses variable length arrays 
+(which are standard)! So what do you think? Do you hate this? Do you 
+feel like it's too unsafe? I think it's great! One of my favorite 
+hobbies is finding what interesting constructs can be derived from a 
+small number of primitives. It's why I like Scheme. Did you know that on
+ some of the first described LISP machines, the chip only supported add 
+by one and and? Crazy!
+
+I do believe that libunwind does this. I'm sure it's more complicated
+for several reasons, but the basics are right here.
+
+Would/should you every use this technique? I'm inclined to say no, 
+but I actually have a use case for it. I'm currently writing a Scheme 
+interpreter, and have decided to try to make it as fast as possible. One
+thought for an optimization was instead of artificially creating a call
+stack through lots of calls to malloc is to exploit the C stack (rather
+the x86 stack that C compilers use). This means that most internal 
+information regarding function calls, such as the calling function, can 
+be stored implicitly or just on the stack. However, if I want to access 
+information stored on the stack for a function earlier in the call 
+chain, you have to pass that information down. If the information you 
+want can only be accessed in very rare, sporadic cases where run time 
+does not matter, this is an annoying solution. The example of this that 
+frequently comes to mind is debugging. I may want an earlier function's 
+name, but if the name is stored as a local variable earlier in the call 
+chain, this technique can certainly solve the problem.
+
+Anyway, I wanted to make this post demonstrating a nifty C trick. Far
+too many of the ones you see online are not all that. 
+
+I've made other posts in the past that describe a trick you can use 
+in GNU C too easily make JIT compilers. If you find this interesting or 
+uninteresting, check them out! You may find it more interesting or just 
+interesting.

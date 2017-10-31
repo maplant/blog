@@ -1,0 +1,96 @@
+%% LyX 2.2.3 created this file.  For more info, see http://www.lyx.org/.
+%% Do not edit unless you really know what you are doing.
+\documentclass[english, 10pt]{article}
+\usepackage{geometry}
+\geometry{verbose,tmargin=0.5in,bmargin=0.5in,lmargin=0.5in,rmargin=0.5in}
+\usepackage{url}
+\usepackage{babel}
+\usepackage{titlesec}
+
+\pagenumbering{gobble}
+
+\renewcommand{\labelitemi}{$\textendash$}
+\titlespacing*{\subsection}{0pt}{10pt}{0pt}
+\titlespacing*{\subsubsection}{0pt}{3pt}{3pt}
+
+\begin{document}
+\begin{center}
+  {\LARGE Matthew Plant \\[5pt]}
+  (650) 388-6631 \\[2pt]
+  maplant95@gmail.com \\[2pt]
+  \url{maplant.com} \textbullet\ \url{github.com/dataanalysiscosby} \\
+%  \rule{1\textwidth}{1pt}
+\end{center}
+
+\subsection*{Education}
+\noindent\rule{\textwidth}{1pt}
+%\begin{center}\rule{1\textwidth}{1pt}\end{center}
+B.S. in Computer Science\hfill{}Graduated May of 2017 \\
+University of Illinois at Urbana-Champaign \\
+Senior Thesis: Using Gated SSA Form to Determine Function Equivalence
+\subsubsection*{Relevant Classes}
+%\begin{center}
+\begin{tabular}{l|ll|l}
+\hspace{18px}ECE 391 Computer Systems Engineering & A & \hspace{20px}CS 450 Numerical Analysis  & B-\tabularnewline
+\hspace{18px}CS 498 Algorithms and Models of Computation & B & \hspace{20px}CS 423 Operating System Designs  & B+\tabularnewline
+\hspace{18px}CS 426 Compiler Construction & A & \hspace{20px}CS 526 (grad) Advanced Compiler Construction  & A-\tabularnewline
+\end{tabular}
+%\end{center}
+
+\subsection*{Work Experience}
+\noindent\rule{\textwidth}{1pt}
+Software Engineering Intern \textemdash\ \texttt{Google Inc.}\hfill{}Summer of 2016
+\begin{itemize}
+  \setlength\itemsep{1pt}
+\item Wrote \textbf{Go} services to automatically test video applications on consumer devices
+\item Hands on experience with \textbf{PS4} and \textbf{Xbox One} development kits
+\end{itemize}
+Software Engineering Intern \textemdash\ \texttt{Google Inc.}\hfill{}Summer of 2015
+\begin{itemize}
+  \setlength\itemsep{1pt}
+\item Worked on the Census team maintaining a large and integral \textbf{C++} code base
+\item Added new heap tracking features to the Google's core \textbf{profiling} tools
+\item Removed undefined behavior in the code base by making it \textbf{ISO C++11 standard compliant}
+\end{itemize}
+Software Engineering Intern \textemdash\ \texttt{Google Inc.}\hfill{}Summer of 2014
+\begin{itemize}
+  \setlength\itemsep{1pt}
+\item Wrote a tool based on \textbf{Clang} to rename symbols across multiple \textbf{C++} files
+\item Released the tool as \textbf{open-source} with the name \textbf{Clang-Rename}
+\item \url{clang.llvm.org/extra/clang-rename.html}
+\end{itemize}
+
+\subsection*{Relevant Works}
+\noindent\rule{\textwidth}{1pt}
+MGF: Matt's Game Framework \textemdash\ \url{crates.io/crates/mgf}
+\begin{itemize}
+  \setlength\itemsep{1pt}
+\item Collision detection and rigid body physics simulation library for the \textbf{Rust} programming language.
+\item Implements many unique dynamic collision detection routines, such as exact moving capsule collisions without the use of approximate GJK.
+\item Released as a crate and downloadable via Rust's built-in package manager, Cargo.
+\end{itemize}
+Article: Writing A Simple Garbage Collector in C \textemdash\ \url{maplant.com/gc.html}
+\begin{itemize}
+  \setlength\itemsep{1pt}
+\item Article I wrote in my spare time to demonstrate how to research and program algorithms that initially seem too obtuse
+\item Well received, reached the front page of \texttt{Hacker News} and published in the magazine \texttt{Hacker News Monthly}
+\end{itemize}
+FACT \textemdash\ \url{github.com/dataanalysiscosby/FACT}
+\begin{itemize}
+  \setlength\itemsep{1pt}
+\item Programming language designed and implemented from scratch in \textbf{C} my freshman year of high school
+\item By the time it was finished it had a custom recursive descent parser that was compiled into bytecode for my own custom virtual machine
+\end{itemize}
+
+\subsection*{Additional Experience}
+\noindent\rule{\textwidth}{1pt}
+Compiler Research at UIUC \textemdash\ \url{allvm.org}
+\begin{itemize}
+  \setlength\itemsep{1pt}
+\item Became a member of the ALLVM research group, headed by Vikram Adve
+\item Wrote a senior thesis on using Gated SSA to detect duplicate code blocks
+\item Implemented On Stack Replacement for \textbf{LLVM}'s McJIT for the graduate level
+  class CS 526 Compiler Construction
+\end{itemize}
+
+\end{document}

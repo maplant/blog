@@ -1,0 +1,9 @@
+/* I found this CSS on https://swtch.com/~rsc/ and liked it. */
+body {
+    margin-left: 2em;
+    margin-right: 2em;
+}
+
+.title {
+    text-align: center;
+}
